@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="fa" dir="rtl" data-theme="color">
 <head>
@@ -183,13 +184,12 @@ header.top{display:flex;justify-content:space-between;align-items:center;gap:12p
 (function(){
 "use strict";
 
-/* ---------- Config ---------- */
 var CFG={
   endpoint:"https://fra.cloud.appwrite.io/v1",
   project:"6b09543c003a32ca7df5",
   db:"tablesdb",
   products:"6b095545001afe310a82",
-  settings:"settings",          /* shared settings table (see setup guide) */
+  settings:"settings",
   settingsRow:"main",
   admin:"6b0957e600375e42652a"
 };
@@ -214,7 +214,6 @@ var SAMPLES=[
 {id:"sample_14",n:"پد موس بزرگ شهر شبانه",c:"لوازم جانبی",e:"🌃",p:390000,d:"ضد لغزش، ۹۰ در ۴۰"}
 ];
 
-/* ---------- State & helpers ---------- */
 var S={name:DEF_NAME,theme:DEF_THEME,cats:DEF_CATS.slice(),products:[],usingSamples:false};
 var saved={name:DEF_NAME,theme:DEF_THEME};
 var cat="همه",isAdmin=false,editId=null,loading=true,loadError="";
@@ -231,18 +230,16 @@ function getUser(){try{return localStorage.getItem("pb_user")}catch(e){return nu
 function setUser(v){try{if(v)localStorage.setItem("pb_user",v);else localStorage.removeItem("pb_user")}catch(e){}}
 function setStatus(msg,bad){var s=$("status");s.textContent=msg||"";s.className=bad?"bad":""}
 
+/* Improved error message: shows the real Appwrite error. */
 function errText(e){
   if(!e)return "خطای ناشناخته.";
-  var c=e.code,t=e.type||"",m=e.message||"";
-  if(c===401)return "دسترسی مجاز نیست (۴۰۱). با حساب مدیر وارد شوید و دسترسی‌های جدول را بررسی کنید.";
-  if(c===404)return "جدول یا ردیف پیدا نشد (۴۰۴). شناسه‌ها و ساخت جدول را بررسی کنید.";
-  if(c===409)return "این مورد از قبل وجود دارد (۴۰۹).";
-  if(c===429)return "تعداد درخواست‌ها زیاد است؛ کمی بعد دوباره تلاش کنید.";
-  if(!c||/network|fetch|failed|cors/i.test(m))return "اتصال به Appwrite برقرار نشد. اینترنت و تنظیم Platform (دامنه سایت) را در Appwrite بررسی کنید.";
-  return "خطا: "+(m||t||"ناشناخته");
+  console.error("APPWRITE ERROR:",e);
+  var c=e.code||"unknown";
+  var t=e.type||"unknown";
+  var m=e.message||"No message returned";
+  return "Appwrite error — Code: "+c+" | Type: "+t+" | Message: "+m;
 }
 
-/* ---------- SDK loading ---------- */
 function loadScript(src){
   return new Promise(function(res,rej){
     var s=document.createElement("script");s.src=src;s.async=true;
@@ -265,8 +262,8 @@ function initSdk(){
   Q=A.Query;
 }
 
-/* ---------- Appwrite data ---------- */
 function mapRow(r){return {id:r.$id,n:r.name||"",c:r.category||"",d:r.description||"",img:r.image||"",e:r.emoji||"📦",p:Number(r.price)||0,sample:false}}
+
 async function fetchProducts(){
   var all=[],off=0;
   for(;;){
@@ -277,10 +274,13 @@ async function fetchProducts(){
   }
   return all.map(mapRow);
 }
+
+/* Settings errors are no longer silently hidden. */
 async function fetchSettings(){
   try{
     var r=await tdb.getRow({databaseId:CFG.db,tableId:CFG.settings,rowId:CFG.settingsRow});
-    settingsExists=true;settingsTableMissing=false;
+    settingsExists=true;
+    settingsTableMissing=false;
     S.name=(r.storeName||"").trim()||DEF_NAME;
     S.theme=THEMES[r.theme]?r.theme:DEF_THEME;
     var cats=null;
@@ -288,27 +288,57 @@ async function fetchSettings(){
     cats=Array.isArray(cats)?cats.map(function(x){return String(x).trim()}).filter(Boolean):[];
     S.cats=cats.length?cats.filter(function(x,i){return cats.indexOf(x)===i}):DEF_CATS.slice();
   }catch(e){
+    console.error("SETTINGS FETCH ERROR:",e);
     settingsExists=false;
-    settingsTableMissing=(e.type==="table_not_found"||e.type==="database_not_found");
-    S.name=DEF_NAME;S.theme=DEF_THEME;S.cats=DEF_CATS.slice();
+    settingsTableMissing=(e.code===404);
+    S.name=DEF_NAME;
+    S.theme=DEF_THEME;
+    S.cats=DEF_CATS.slice();
   }
   saved={name:S.name,theme:S.theme};
 }
+
 async function persistSettings(next){
   var n={name:S.name,theme:S.theme,cats:S.cats};
   for(var k in next)n[k]=next[k];
-  var data={storeName:n.name,theme:n.theme,categories:JSON.stringify(n.cats)};
-  var base={databaseId:CFG.db,tableId:CFG.settings,rowId:CFG.settingsRow,data:data};
-  if(settingsExists){
-    await tdb.updateRow(base);
-  }else{
-    try{await tdb.createRow(base)}
-    catch(e){if(e.code===409)await tdb.updateRow(base);else throw e}
-    settingsExists=true;settingsTableMissing=false;
+  var data={
+    storeName:n.name,
+    theme:n.theme,
+    categories:JSON.stringify(n.cats)
+  };
+  var base={
+    databaseId:CFG.db,
+    tableId:CFG.settings,
+    rowId:CFG.settingsRow,
+    data:data
+  };
+
+  try{
+    if(settingsExists){
+      await tdb.updateRow(base);
+    }else{
+      try{
+        await tdb.createRow(base);
+      }catch(e){
+        if(e.code===409){
+          await tdb.updateRow(base);
+        }else{
+          throw e;
+        }
+      }
+    }
+    settingsExists=true;
+    settingsTableMissing=false;
+    S.name=n.name;
+    S.theme=n.theme;
+    S.cats=n.cats;
+    saved={name:S.name,theme:S.theme};
+  }catch(e){
+    console.error("SETTINGS SAVE ERROR:",e);
+    throw e;
   }
-  S.name=n.name;S.theme=n.theme;S.cats=n.cats;
-  saved={name:S.name,theme:S.theme};
 }
+
 async function loadData(){
   loading=true;loadError="";renderAll();
   await fetchSettings();
@@ -322,6 +352,7 @@ async function loadData(){
   }catch(e){S.products=[];S.usingSamples=false;loadError=errText(e)}
   loading=false;renderAll();
 }
+
 async function seedSamples(){
   var existing={};
   (await fetchProducts()).forEach(function(p){existing[norm(p.n)]=true});
@@ -337,18 +368,22 @@ async function seedSamples(){
   return made;
 }
 
-/* ---------- Rendering ---------- */
 function applyBrand(){
   document.documentElement.dataset.theme=S.theme;
-  $("brand").textContent=S.name;$("loginBrand").textContent=S.name;document.title=S.name;
+  $("brand").textContent=S.name;
+  $("loginBrand").textContent=S.name;
+  document.title=S.name;
 }
 function showShop(label){
-  $("login").hidden=!!label;$("shop").hidden=!label;
+  $("login").hidden=!!label;
+  $("shop").hidden=!label;
   if(label){$("who").textContent=label;renderAll()}
 }
 function route(){
   var v=getUser();
-  if(v)showShop("@"+v);else if(isAdmin)showShop("مدیر");else showShop(null);
+  if(v)showShop("@"+v);
+  else if(isAdmin)showShop("مدیر");
+  else showShop(null);
 }
 function renderCats(){
   if(cat!=="همه"&&S.cats.indexOf(cat)<0)cat="همه";
@@ -398,15 +433,15 @@ function renderAdmin(){
   var w=$("a-warn");
   if(settingsTableMissing){
     w.hidden=false;
-    w.textContent="جدول تنظیمات (شناسه settings) در Appwrite ساخته نشده است؛ تا آن را نسازید نام، پوسته و دسته‌بندی‌ها ذخیره نمی‌شوند. راهنمای ساخت در توضیحات تحویل آمده است.";
+    w.textContent="دریافت تنظیمات از Appwrite با خطای ۴۰۴ مواجه شد. شناسه جدول settings و شناسه ردیف main را بررسی کنید و Row Security را خاموش کنید.";
   }else w.hidden=true;
 }
 function renderAll(){applyBrand();renderCats();renderGrid();if(!$("panel").hidden)renderAdmin()}
 
-/* ---------- Admin session ---------- */
 function setAdmin(on){
   isAdmin=on;
-  $("fab").hidden=!on;$("adminLink").hidden=on;
+  $("fab").hidden=!on;
+  $("adminLink").hidden=on;
   if(!on)$("panel").hidden=true;
   renderGrid();
 }
@@ -441,7 +476,6 @@ async function afterAdminLogin(){
   }catch(e){setStatus(errText(e),true)}
 }
 
-/* ---------- Panel ---------- */
 function openPanel(){
   $("a-name").value=S.name;
   $("panel").hidden=false;
@@ -452,10 +486,12 @@ function closePanel(){
   if(S.name!==saved.name||S.theme!==saved.theme){S.name=saved.name;S.theme=saved.theme;applyBrand()}
 }
 function clearForm(){
-  editId=null;$("a-ptitle").textContent="محصول جدید";
+  editId=null;
+  $("a-ptitle").textContent="محصول جدید";
   ["p-name","p-emoji","p-image","p-price","p-desc"].forEach(function(id){$(id).value=""});
   $("p-err").textContent="";
 }
+
 async function saveProduct(){
   var perr=$("p-err");perr.textContent="";
   var name=$("p-name").value.trim();
@@ -473,6 +509,7 @@ async function saveProduct(){
     await loadData();
   }catch(e){perr.textContent=errText(e)}
 }
+
 async function renameCat(i,v){
   var old=S.cats[i];
   var next=S.cats.slice();next[i]=v;
@@ -484,7 +521,8 @@ async function renameCat(i,v){
   }
   S.products.forEach(function(p){if(p.c===old)p.c=v});
   if(cat===old)cat=v;
-  setStatus("دسته‌بندی تغییر کرد.");renderAll();
+  setStatus("دسته‌بندی تغییر کرد.");
+  renderAll();
 }
 async function removeCat(i){
   var old=S.cats[i];
@@ -496,7 +534,9 @@ async function removeCat(i){
     await tdb.updateRow({databaseId:CFG.db,tableId:CFG.products,rowId:affected[k].id,data:{category:""}});
   }
   S.products.forEach(function(p){if(p.c===old)p.c=""});
-  setStatus("دسته‌بندی حذف شد.");renderAll();
+  if(cat===old)cat="همه";
+  setStatus("دسته‌بندی حذف شد.");
+  renderAll();
 }
 async function run(btn,fn){
   if(btn&&btn.disabled)return;
@@ -504,12 +544,13 @@ async function run(btn,fn){
   try{await fn()}finally{if(btn)btn.disabled=false}
 }
 
-/* ---------- Events ---------- */
 $("loginForm").addEventListener("submit",function(e){
   e.preventDefault();
   var v=$("tg").value.trim().replace(/^@/,"");
   if(!/^[A-Za-z][A-Za-z0-9_]{4,31}$/.test(v)){$("err").textContent="نام کاربری باید ۵ تا ۳۲ نویسه (حرف انگلیسی، عدد یا _) باشد و با حرف شروع شود.";return}
-  $("err").textContent="";setUser(v);route();
+  $("err").textContent="";
+  setUser(v);
+  route();
 });
 $("logout").addEventListener("click",function(){setUser(null);$("tg").value="";route()});
 $("q").addEventListener("input",renderGrid);
@@ -567,8 +608,12 @@ $("addcat").addEventListener("click",function(){
     var v=$("a-newcat").value.trim();
     if(!v)return;
     if(S.cats.indexOf(v)>-1){setStatus("این دسته‌بندی از قبل وجود دارد.",true);return}
-    try{await persistSettings({cats:S.cats.concat([v])});$("a-newcat").value="";setStatus("دسته‌بندی افزوده شد.");renderAll()}
-    catch(e){setStatus(errText(e),true)}
+    try{
+      await persistSettings({cats:S.cats.concat([v])});
+      $("a-newcat").value="";
+      setStatus("دسته‌بندی افزوده شد.");
+      renderAll();
+    }catch(e){setStatus(errText(e),true)}
   });
 });
 $("a-cats").addEventListener("change",function(e){
@@ -633,28 +678,32 @@ $("grid").addEventListener("click",function(e){
     });
   }
 });
-/* broken product images fall back to the emoji */
 $("grid").addEventListener("error",function(e){
   var t=e.target;
   if(t&&t.tagName==="IMG"&&t.parentNode){t.parentNode.textContent=t.getAttribute("data-emoji")||"📦"}
 },true);
 document.addEventListener("keydown",function(e){
-  if(e.key==="Escape"){if(!$("auth").hidden)$("auth").hidden=true;else if(!$("panel").hidden)closePanel()}
+  if(e.key==="Escape"){
+    if(!$("auth").hidden)$("auth").hidden=true;
+    else if(!$("panel").hidden)closePanel();
+  }
 });
 
-/* ---------- Boot ---------- */
 async function boot(){
   applyBrand();route();
   var ok=await loadSdk();
   if(!ok){
-    loading=false;loadError="بارگذاری کتابخانه‌ی Appwrite انجام نشد. اینترنت خود را بررسی کنید.";
+    loading=false;
+    loadError="بارگذاری کتابخانه‌ی Appwrite انجام نشد. اینترنت خود را بررسی کنید.";
     renderAll();return;
   }
   try{
     initSdk();
     await checkSession();
     if(isAdmin){$("fab").hidden=false;$("adminLink").hidden=true}
-  }catch(e){loading=false;loadError=errText(e);renderAll();return}
+  }catch(e){
+    loading=false;loadError=errText(e);renderAll();return;
+  }
   route();
   await loadData();
 }
